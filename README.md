@@ -2,7 +2,7 @@
 
 자연어로 묻는 Kubernetes 클러스터 진단 도구. 조회만 하고, 모든 결론에 근거를 붙인다.
 
-> 현재 단계: **Phase 3 — 평가 하네스** (Phase 0~2 완료)
+> 현재 단계: **Phase 4 — API** (Phase 0~3 완료)
 
 ## 사전 준비
 
@@ -104,6 +104,31 @@ make eval SCENARIOS=S1,S3  # 일부만
 
 결과는 `eval/results/latest.md`(표)와 `latest.json`에 저장된다. 목표(6개 중 5개 이상 적중 + 모든 원인 후보에 증거 링크)를
 못 넘으면 종료 코드 1. GitHub Actions에서는 **Actions → CI → Run workflow**로 수동 실행한다(API 비용이 들기 때문에 push 때는 돌지 않음).
+
+## API (Phase 4)
+
+FastAPI + SQLite(SQLModel) + SSE. `make api`로 `http://127.0.0.1:8000`에 띄운다 (`/docs`에 OpenAPI 문서).
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/api/kube/contexts?kubeconfig_path=` | kubeconfig의 context 이름 목록 (내용은 반환하지 않음) |
+| GET/POST | `/api/clusters` | 클러스터 목록 / 등록 |
+| POST | `/api/clusters/{id}/test` | 연결 테스트 (네임스페이스 조회 + 서버 버전) |
+| GET/POST | `/api/sessions` | 세션 목록 / 생성 |
+| GET | `/api/sessions/{id}` | 메시지 + 진단 결과 + 도구 호출 |
+| POST | `/api/sessions/{id}/messages` | 질문 전송, **SSE 응답** (`thinking`, `tool_start`, `tool_end`, `final`, `error`) |
+| GET | `/api/toolcalls/{id}` | 증거 원본 (마스킹 적용) |
+
+진단 결과의 `evidence_refs`는 DB의 `ToolCall.id`를 가리킨다. SSE 이벤트 순서 확인:
+
+```bash
+make api            # 터미널 1
+make sse-smoke      # 터미널 2 — curl로 질문을 보내고 이벤트 순서를 검사
+```
+
+환경 변수: `KUBELENS_DB_URL`(기본 `backend/kubelens.db`), `KUBELENS_KUBECONFIG`, `KUBELENS_MODEL`.
+테스트용 주입: `KUBELENS_LLM_FACTORY=tests.fake_llms:scripted_llms`(API 키 없이 대본대로 움직이는 가짜 LLM),
+`KUBELENS_KUBE_FACTORY=tests.fakes:fake_kube`(클러스터 없이). 둘 다 `backend/`에서 실행할 때만 import된다.
 
 ## 장애 시나리오
 

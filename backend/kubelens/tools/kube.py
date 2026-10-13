@@ -27,11 +27,12 @@ def default_kubeconfig_path() -> Path:
 class ReadOnlyKube:
     """allowlist된 조회 메서드만 노출하는 래퍼. 원본 Api 객체로의 우회 경로를 두지 않는다."""
 
-    __slots__ = ("_core", "_apps")
+    __slots__ = ("_core", "_apps", "_version")
 
-    def __init__(self, core: Any, apps: Any) -> None:
+    def __init__(self, core: Any, apps: Any, version: Any = None) -> None:
         self._core = core
         self._apps = apps
+        self._version = version
 
     @classmethod
     def from_kubeconfig(
@@ -39,7 +40,18 @@ class ReadOnlyKube:
     ) -> ReadOnlyKube:
         kubeconfig = Path(path) if path is not None else default_kubeconfig_path()
         api_client = config.new_client_from_config(config_file=str(kubeconfig), context=context)
-        return cls(client.CoreV1Api(api_client), client.AppsV1Api(api_client))
+        return cls(
+            client.CoreV1Api(api_client),
+            client.AppsV1Api(api_client),
+            client.VersionApi(api_client),
+        )
+
+    # --- /version (연결 테스트용, LLM 도구 아님) ----------------------------
+
+    def read_version(self) -> str:
+        if self._version is None:
+            return "unknown"
+        return str(self._version.get_code().git_version)
 
     # --- core/v1 ---------------------------------------------------------
 

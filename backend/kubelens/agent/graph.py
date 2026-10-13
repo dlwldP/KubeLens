@@ -187,6 +187,9 @@ def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = Non
                     "status": ev.status,
                     "duration_ms": ev.duration_ms,
                     "truncated": ev.truncated,
+                    "args": ev.args,
+                    # 마스킹·절단 후 출력. API가 DB에 저장한다 (SSE로는 보내지 않음)
+                    "output": ev.output,
                 },
             )
             replies.append(

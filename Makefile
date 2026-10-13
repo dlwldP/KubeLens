@@ -7,7 +7,7 @@ BACKEND   := backend
 UV        := uv --directory $(BACKEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind ask eval
+        setup lint test test-unit test-kind ask eval api sse-smoke
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -65,6 +65,14 @@ test: lint test-unit test-kind
 # 평가 하네스 (kind + ANTHROPIC_API_KEY 필요). 예: make eval SCENARIOS=S1,S3
 eval:
 	$(UV) run python ../eval/harness.py $(if $(SCENARIOS),--scenarios $(SCENARIOS))
+
+# API 서버 (frontend/dist가 있으면 UI도 함께 서빙). ANTHROPIC_API_KEY 필요
+api:
+	$(UV) run uvicorn kubelens.api.app:app --host 127.0.0.1 --port 8000
+
+# 실행 중인 API에 질문을 보내 SSE 이벤트 순서를 검사한다 (Phase 4 완료 조건)
+sse-smoke:
+	bash $(BACKEND)/scripts/sse-smoke.sh
 
 # 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
 ask:

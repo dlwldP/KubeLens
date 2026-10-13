@@ -378,3 +378,25 @@ class FakeApps:
         self, namespace: str, label_selector: str | None = None
     ) -> _List:
         return _List(replica_sets())
+
+
+class FakeVersion:
+    def get_code(self) -> k.VersionInfo:
+        return k.VersionInfo(
+            git_version="v1.33.1",
+            build_date="",
+            compiler="",
+            git_commit="",
+            git_tree_state="",
+            go_version="",
+            major="1",
+            minor="33",
+            platform="linux/amd64",
+        )
+
+
+def fake_kube(kubeconfig_path: str | None = None, context: str | None = None) -> Any:
+    """KUBELENS_KUBE_FACTORY=tests.fakes:fake_kube 로 클러스터 없이 API/UI를 띄울 때 쓴다."""
+    from kubelens.tools import ReadOnlyKube
+
+    return ReadOnlyKube(FakeCore(), FakeApps(), FakeVersion())

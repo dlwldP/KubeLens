@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -20,53 +18,11 @@ from kubelens.agent import (
 )
 from kubelens.agent.tool_specs import all_tool_specs
 from kubelens.tools import TOOLS
+from tests.fake_llms import FakeLLMs, Planner, ScriptedActor, ScriptedSynth
+from tests.fake_llms import tool_call as _call
 from tests.fakes import NS
 
 S1_POD = "payment-api-7d9f-abcde"
-
-
-def _call(name: str, args: dict[str, Any], call_id: str) -> dict[str, Any]:
-    return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
-
-
-@dataclass
-class ScriptedActor:
-    """턴마다 미리 정한 tool_calls를 돌려주고, 다 쓰면 도구 없이 끝낸다."""
-
-    turns: list[list[dict[str, Any]]]
-    seen: list[list[AnyMessage]] = field(default_factory=list)
-
-    def invoke(self, messages: list[AnyMessage]) -> AIMessage:
-        self.seen.append(list(messages))
-        if self.turns:
-            return AIMessage(content="", tool_calls=self.turns.pop(0))
-        return AIMessage(content="조사 완료")
-
-
-@dataclass
-class Planner:
-    def invoke(self, messages: list[AnyMessage]) -> AIMessage:
-        return AIMessage(content="1. 파드 상태 확인\n2. 직전 로그 확인")
-
-
-@dataclass
-class ScriptedSynth:
-    outputs: list[Diagnosis | Callable[[str], Diagnosis]]
-    prompts: list[str] = field(default_factory=list)
-
-    def invoke(self, messages: list[AnyMessage]) -> dict[str, Any]:
-        prompt = str(messages[-1].content)
-        self.prompts.append(prompt)
-        out = self.outputs.pop(0)
-        parsed = out(prompt) if callable(out) else out
-        return {"raw": AIMessage(content=""), "parsed": parsed, "parsing_error": None}
-
-
-@dataclass
-class FakeLLMs:
-    planner: Any
-    actor: Any
-    synthesizer: Any
 
 
 def s1_diagnosis(refs: list[str]) -> Diagnosis:
