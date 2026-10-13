@@ -3,7 +3,11 @@ CTX       := kind-$(CLUSTER)
 KUBECTL   := kubectl --context $(CTX)
 CHAOS_NS  := kubelens-chaos
 
-.PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status
+BACKEND   := backend
+UV        := uv --directory $(BACKEND)
+
+.PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
+        setup lint test test-unit test-kind
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -39,3 +43,21 @@ chaos-verify:
 
 chaos-status:
 	$(KUBECTL) get pods -n $(CHAOS_NS) -o wide
+
+# --- 백엔드 (Phase 1~) ------------------------------------------------------
+
+setup:
+	$(UV) sync
+
+lint:
+	$(UV) run ruff check .
+	$(UV) run ruff format --check .
+
+test-unit:
+	$(UV) run pytest -m "not kind"
+
+# kind 클러스터 대상 (make phase0 선행). 클러스터가 없으면 skip이 아니라 실패한다.
+test-kind:
+	KUBELENS_REQUIRE_KIND=1 $(UV) run pytest -m kind
+
+test: lint test-unit test-kind
