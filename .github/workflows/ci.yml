@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: lint + unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make setup
+      - run: make lint
+      - run: make test-unit
+
+  kind:
+    name: phase0 + kind integration tests
+    runs-on: ubuntu-24.04
+    needs: unit
+    env:
+      KIND_VERSION: v0.29.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install kind
+        run: |
+          curl -fsSLo /usr/local/bin/kind \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x /usr/local/bin/kind
+          kind version
+          kubectl version --client
+
+      - name: make phase0 (cluster, RBAC, chaos S1~S6, verify)
+        run: make phase0
+
+      - run: make setup
+      - name: make test-kind
+        run: make test-kind
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl --context kind-kubelens get nodes -o wide || true
+          kubectl --context kind-kubelens get pods -A -o wide || true
+          kubectl --context kind-kubelens -n kubelens-chaos describe pods || true
+          kubectl --context kind-kubelens -n kubelens-chaos get events --sort-by=.lastTimestamp || true
+
+      - name: Delete cluster
+        if: always()
+        run: make cluster-down || true
