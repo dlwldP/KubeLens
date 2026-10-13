@@ -1,0 +1,29 @@
+# S5: 존재하지 않는 노드 풀(gpu)을 nodeSelector로 지정 → Pending (node affinity/selector)
+# worker 노드 라벨은 kubelens.io/pool=general (infra/kind-config.yaml)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-inference
+  namespace: kubelens-chaos
+  labels:
+    kubelens.io/scenario: s5
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gpu-inference
+  template:
+    metadata:
+      labels:
+        app: gpu-inference
+        kubelens.io/scenario: s5
+    spec:
+      nodeSelector:
+        kubelens.io/pool: gpu
+      containers:
+        - name: inference
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }

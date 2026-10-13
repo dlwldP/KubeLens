@@ -1,0 +1,25 @@
+# S2: 존재하지 않는 이미지 태그 → ErrImagePull / ImagePullBackOff
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-frontend
+  namespace: kubelens-chaos
+  labels:
+    kubelens.io/scenario: s2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-frontend
+  template:
+    metadata:
+      labels:
+        app: web-frontend
+        kubelens.io/scenario: s2
+    spec:
+      containers:
+        - name: web
+          image: nginx:9.99.99-doesnotexist
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }

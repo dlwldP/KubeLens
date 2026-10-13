@@ -1,0 +1,59 @@
+# 평가 정답지 (기획서 13장). Phase 3 평가 하네스가 사용한다.
+#
+# must_match: 그룹 리스트. 모든 그룹이 충족되어야 적중.
+#             그룹 안의 대안 중 하나만 나오면 그 그룹은 충족. (대소문자 무시)
+#             검사 대상은 진단 결과의 1순위 root_cause(title + explanation).
+# must_not_appear: 최종 출력 어디에도 나오면 안 되는 문자열 (마스킹 검증)
+
+namespace: kubelens-chaos
+
+scenarios:
+  - id: S1
+    deployment: payment-api
+    question: "kubelens-chaos 네임스페이스의 payment-api가 계속 재시작돼. 왜 그래?"
+    expected_state: CrashLoopBackOff
+    must_match:
+      - ["DB_HOST"]
+      - ["환경변수", "환경 변수", "environment variable", "env"]
+    must_not_appear:
+      - "kl-fake-0000000000000000"
+
+  - id: S2
+    deployment: web-frontend
+    question: "web-frontend 파드가 안 떠. 원인이 뭐야?"
+    expected_state: ImagePullBackOff
+    must_match:
+      - ["image", "이미지"]
+      - ["9.99.99-doesnotexist", "not found", "태그", "tag", "pull"]
+
+  - id: S3
+    deployment: report-worker
+    question: "report-worker가 자꾸 죽어. 원인 알려줘"
+    expected_state: OOMKilled
+    must_match:
+      - ["OOMKilled", "OOM"]
+      - ["memory limit", "메모리 limit", "메모리 제한", "32Mi"]
+
+  - id: S4
+    deployment: batch-trainer
+    question: "batch-trainer가 계속 Pending이야. 왜 스케줄이 안 돼?"
+    expected_state: Pending
+    must_match:
+      - ["Insufficient memory", "메모리 부족", "메모리가 부족"]
+      - ["64Gi", "request", "요청"]
+
+  - id: S5
+    deployment: gpu-inference
+    question: "gpu-inference 파드가 어떤 노드에도 안 올라가. 이유가 뭐야?"
+    expected_state: Pending
+    must_match:
+      - ["nodeSelector", "node selector", "affinity", "노드 셀렉터"]
+      - ["kubelens.io/pool", "gpu"]
+
+  - id: S6
+    deployment: order-service
+    question: "order-service 컨테이너가 시작을 못 해. 뭐가 문제야?"
+    expected_state: CreateContainerConfigError
+    must_match:
+      - ["ConfigMap", "컨피그맵"]
+      - ["order-service-config"]

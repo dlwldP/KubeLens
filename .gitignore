@@ -1,0 +1,20 @@
+# 자격증명 — 절대 커밋 금지
+infra/kubelens.kubeconfig
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.db
+
+# Node
+node_modules/
+dist/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

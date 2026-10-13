@@ -1,0 +1,26 @@
+# S4: 어떤 노드의 allocatable보다도 큰 메모리 요청 → Pending (Insufficient memory)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-trainer
+  namespace: kubelens-chaos
+  labels:
+    kubelens.io/scenario: s4
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batch-trainer
+  template:
+    metadata:
+      labels:
+        app: batch-trainer
+        kubelens.io/scenario: s4
+    spec:
+      containers:
+        - name: trainer
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests: { cpu: 10m, memory: 64Gi }
+            limits: { memory: 64Gi }
