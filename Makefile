@@ -4,10 +4,12 @@ KUBECTL   := kubectl --context $(CTX)
 CHAOS_NS  := kubelens-chaos
 
 BACKEND   := backend
+FRONTEND  := frontend
 UV        := uv --directory $(BACKEND)
+NPM       := npm --prefix $(FRONTEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind ask eval api sse-smoke
+        setup lint test test-unit test-kind ask eval api sse-smoke ui-dev e2e
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -46,12 +48,17 @@ chaos-status:
 
 # --- 백엔드 (Phase 1~) ------------------------------------------------------
 
+# 백엔드 의존성 + 프런트 빌드 (빌드된 UI는 make api가 함께 서빙한다)
 setup:
 	$(UV) sync
+	$(NPM) ci
+	$(NPM) run build
 
 lint:
 	$(UV) run ruff check . ../eval
 	$(UV) run ruff format --check . ../eval
+	$(NPM) run lint
+	$(NPM) run typecheck
 
 test-unit:
 	$(UV) run pytest -m "not kind" tests ../eval
@@ -73,6 +80,14 @@ api:
 # 실행 중인 API에 질문을 보내 SSE 이벤트 순서를 검사한다 (Phase 4 완료 조건)
 sse-smoke:
 	bash $(BACKEND)/scripts/sse-smoke.sh
+
+# 프런트 개발 서버 (http://localhost:5173, /api는 make api로 프록시)
+ui-dev:
+	$(NPM) run dev
+
+# 실행 중인 서버(기본 :8000)를 대상으로 Playwright e2e
+e2e:
+	$(NPM) run e2e
 
 # 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
 ask:

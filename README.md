@@ -2,7 +2,7 @@
 
 자연어로 묻는 Kubernetes 클러스터 진단 도구. 조회만 하고, 모든 결론에 근거를 붙인다.
 
-> 현재 단계: **Phase 4 — API** (Phase 0~3 완료)
+> 현재 단계: **Phase 5 — UI** (Phase 0~4 완료)
 
 ## 사전 준비
 
@@ -129,6 +129,17 @@ make sse-smoke      # 터미널 2 — curl로 질문을 보내고 이벤트 순�
 환경 변수: `KUBELENS_DB_URL`(기본 `backend/kubelens.db`), `KUBELENS_KUBECONFIG`, `KUBELENS_MODEL`.
 테스트용 주입: `KUBELENS_LLM_FACTORY=tests.fake_llms:scripted_llms`(API 키 없이 대본대로 움직이는 가짜 LLM),
 `KUBELENS_KUBE_FACTORY=tests.fakes:fake_kube`(클러스터 없이). 둘 다 `backend/`에서 실행할 때만 import된다.
+
+## UI (Phase 5)
+
+React + Vite + TypeScript(strict) + Tailwind. `make setup`이 `frontend/dist`를 빌드하고, `make api`가 UI를 함께 서빙한다.
+
+1. **클러스터 설정**: kubeconfig context 선택 → 연결 테스트(서버 버전 표시) → 저장
+2. **진단 화면**: 좌측 세션 목록 · 가운데 대화와 진단 결과 카드 · 우측 실시간 도구 트레이스
+3. **증거 모달**: 증거 링크나 트레이스 항목을 누르면 도구명·인자·마스킹된 원본 출력과 절단 여부 표시
+
+개발 중에는 `make api`와 `make ui-dev`(http://localhost:5173, `/api` 프록시)를 함께 띄운다.
+e2e: 서버를 띄운 뒤 `make e2e` (Playwright).
 
 ## 장애 시나리오
 

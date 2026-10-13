@@ -22,6 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: make setup
       - run: make lint
       - run: make test-unit
@@ -35,6 +40,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install kind
         run: |
@@ -51,14 +61,32 @@ jobs:
       - name: make test-kind
         run: make test-kind
 
-      - name: "Phase 4: API SSE 스모크 (실제 kind + 대본 LLM, API 키 불필요)"
+      - name: "Phase 4·5: API 서버 기동 (실제 kind + 대본 LLM, API 키 불필요)"
         run: |
           cd backend
-          KUBELENS_DB_URL=sqlite:///$RUNNER_TEMP/ci.db \
-          KUBELENS_LLM_FACTORY=tests.fake_llms:scripted_llms \
-            nohup uv run uvicorn kubelens.api.app:app --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
-          for i in $(seq 1 60); do curl -fs localhost:8000/api/sessions >/dev/null && break; sleep 1; done
-          bash scripts/sse-smoke.sh
+          for port in 8000 8001; do
+            KUBELENS_DB_URL=sqlite:///$RUNNER_TEMP/ci-$port.db \
+            KUBELENS_LLM_FACTORY=tests.fake_llms:scripted_llms \
+              nohup uv run uvicorn kubelens.api.app:app --port $port > "$RUNNER_TEMP/api-$port.log" 2>&1 &
+          done
+          for port in 8000 8001; do
+            for i in $(seq 1 60); do curl -fs localhost:$port/api/sessions >/dev/null && break; sleep 1; done
+          done
+
+      - name: "Phase 4: curl SSE 이벤트 순서 검사"
+        run: API=http://127.0.0.1:8001 bash backend/scripts/sse-smoke.sh
+
+      - name: "Phase 5: Playwright e2e (클러스터 설정 → 질문 → 트레이스 → 증거 모달 → 히스토리)"
+        run: |
+          (cd frontend && npx playwright install --with-deps chromium)
+          make e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: frontend/e2e-results/
+          if-no-files-found: ignore
 
       - name: Diagnostics on failure
         if: failure()
@@ -67,7 +95,7 @@ jobs:
           kubectl --context kind-kubelens get pods -A -o wide || true
           kubectl --context kind-kubelens -n kubelens-chaos describe pods || true
           kubectl --context kind-kubelens -n kubelens-chaos get events --sort-by=.lastTimestamp || true
-          cat "$RUNNER_TEMP/api.log" || true
+          cat "$RUNNER_TEMP"/api-*.log || true
 
       - name: Delete cluster
         if: always()
@@ -84,6 +112,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Check ANTHROPIC_API_KEY
         run: |
