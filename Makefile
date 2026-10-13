@@ -9,7 +9,7 @@ UV        := uv --directory $(BACKEND)
 NPM       := npm --prefix $(FRONTEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind ask eval api sse-smoke ui-dev e2e
+        setup lint test test-unit test-kind ask eval api sse-smoke ui-dev e2e demo-gif
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -88,6 +88,10 @@ ui-dev:
 # 실행 중인 서버(기본 :8000)를 대상으로 Playwright e2e
 e2e:
 	$(NPM) run e2e
+
+# 실행 중인 make api(실제 API 키)로 S1 진단 과정을 녹화해 docs/demo.gif 생성 (ffmpeg 필요)
+demo-gif:
+	bash infra/demo-gif.sh
 
 # 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
 ask:
