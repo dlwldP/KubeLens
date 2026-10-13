@@ -7,7 +7,7 @@ BACKEND   := backend
 UV        := uv --directory $(BACKEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind ask
+        setup lint test test-unit test-kind ask eval
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -50,17 +50,21 @@ setup:
 	$(UV) sync
 
 lint:
-	$(UV) run ruff check .
-	$(UV) run ruff format --check .
+	$(UV) run ruff check . ../eval
+	$(UV) run ruff format --check . ../eval
 
 test-unit:
-	$(UV) run pytest -m "not kind"
+	$(UV) run pytest -m "not kind" tests ../eval
 
 # kind 클러스터 대상 (make phase0 선행). 클러스터가 없으면 skip이 아니라 실패한다.
 test-kind:
 	KUBELENS_REQUIRE_KIND=1 $(UV) run pytest -m kind
 
 test: lint test-unit test-kind
+
+# 평가 하네스 (kind + ANTHROPIC_API_KEY 필요). 예: make eval SCENARIOS=S1,S3
+eval:
+	$(UV) run python ../eval/harness.py $(if $(SCENARIOS),--scenarios $(SCENARIOS))
 
 # 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
 ask:

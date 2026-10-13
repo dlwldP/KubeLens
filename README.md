@@ -2,7 +2,7 @@
 
 자연어로 묻는 Kubernetes 클러스터 진단 도구. 조회만 하고, 모든 결론에 근거를 붙인다.
 
-> 현재 단계: **Phase 2 — 에이전트 (CLI)** (Phase 0·1 완료)
+> 현재 단계: **Phase 3 — 평가 하네스** (Phase 0~2 완료)
 
 ## 사전 준비
 
@@ -91,6 +91,19 @@ cd backend && uv run python -m kubelens ask "..." [-n NAMESPACE] [--json]
 ```
 
 종료 코드: `0` 정상, `1` 오류(거부·파싱 실패 등), `2` 증거 검증 실패.
+
+## 평가 하네스 (Phase 3)
+
+`chaos/expected.yaml`의 S1~S6 질문을 실제 에이전트로 진단하고, **1순위 원인 후보**(제목+설명)에 정답 키워드 그룹이
+모두 들어 있는지 채점한다. 증거 검증 실패나 비밀값 노출(`must_not_appear`)이 있으면 오답으로 처리한다.
+
+```bash
+make eval                  # 전체 (kind + ANTHROPIC_API_KEY 필요)
+make eval SCENARIOS=S1,S3  # 일부만
+```
+
+결과는 `eval/results/latest.md`(표)와 `latest.json`에 저장된다. 목표(6개 중 5개 이상 적중 + 모든 원인 후보에 증거 링크)를
+못 넘으면 종료 코드 1. GitHub Actions에서는 **Actions → CI → Run workflow**로 수동 실행한다(API 비용이 들기 때문에 push 때는 돌지 않음).
 
 ## 장애 시나리오
 
