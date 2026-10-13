@@ -23,6 +23,7 @@ jobs:
     needs: unit
     env:
       KIND_VERSION: v0.29.0
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -41,6 +42,30 @@ jobs:
       - run: make setup
       - name: make test-kind
         run: make test-kind
+
+      - name: "Phase 2: S1 진단 (python -m kubelens ask)"
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          cd backend
+          uv run python -m kubelens ask \
+            "kubelens-chaos 네임스페이스의 payment-api가 계속 재시작돼. 왜 그래?" --json > s1.json
+          cat s1.json
+          uv run python - <<'PY'
+          import json
+          r = json.load(open("s1.json"))
+          assert r["valid"], r["validation_errors"]
+          top = r["diagnosis"]["root_causes"][0]
+          text = (top["title"] + " " + top["explanation"]).lower()
+          assert "db_host" in text, top
+          assert any(k in text for k in ["환경변수", "환경 변수", "environment variable", "env"]), top
+          assert all(c["evidence_refs"] for c in r["diagnosis"]["root_causes"])
+          assert "kl-fake-0000000000000000" not in json.dumps(r, ensure_ascii=False)
+          print("✅ S1 진단 성공:", top["title"])
+          PY
+
+      - name: "Phase 2: API 키 없음 안내"
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::warning::ANTHROPIC_API_KEY 시크릿이 없어 S1 에이전트 진단을 건너뜀"
 
       - name: Diagnostics on failure
         if: failure()

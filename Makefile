@@ -7,7 +7,7 @@ BACKEND   := backend
 UV        := uv --directory $(BACKEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind
+        setup lint test test-unit test-kind ask
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -61,3 +61,7 @@ test-kind:
 	KUBELENS_REQUIRE_KIND=1 $(UV) run pytest -m kind
 
 test: lint test-unit test-kind
+
+# 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
+ask:
+	$(UV) run python -m kubelens ask "$(Q)"

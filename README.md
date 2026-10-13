@@ -2,7 +2,7 @@
 
 자연어로 묻는 Kubernetes 클러스터 진단 도구. 조회만 하고, 모든 결론에 근거를 붙인다.
 
-> 현재 단계: **Phase 1 — 도구 레이어** (Phase 0 환경 구성 완료)
+> 현재 단계: **Phase 2 — 에이전트 (CLI)** (Phase 0·1 완료)
 
 ## 사전 준비
 
@@ -69,6 +69,28 @@ print(run_tool(kube, 'list_pods', {'namespace': 'kubelens-chaos', 'only_unhealth
 | `list_deployments(namespace)` | |
 | `describe_deployment(namespace, name)` | 조건·ReplicaSet·관련 이벤트 |
 | `get_nodes()` | 라벨·taint·allocatable(Gi 환산) |
+
+## 에이전트 (Phase 2: CLI)
+
+`backend/kubelens/agent/`의 LangGraph 그래프가 기획서 8장 흐름대로 동작한다.
+
+```
+질문 → plan → tool_loop(agent ⇄ tools, 도구 호출 최대 8회) → synthesize → validate → 결과
+                                                               └ 증거 없는 원인 후보 → 1회 재생성
+```
+
+- 모델: `claude-sonnet-5-5` (`KUBELENS_MODEL`로 변경 가능). 거부(refusal) 시 서버 측 자동 대체 모델 재시도 사용
+- 도구 결과에는 `tc_1`, `tc_2` … evidence id가 붙고, 모든 원인 후보는 실제 존재하는 id를 1개 이상 인용해야 검증을 통과한다
+- 최종 출력은 `Diagnosis` 스키마(요약 / 원인 후보·신뢰도·근거 / 다음 조치 명령어 제안)로 구조화된다
+
+```bash
+export ANTHROPIC_API_KEY=...
+make ask Q="kubelens-chaos 네임스페이스의 payment-api가 계속 재시작돼. 왜 그래?"
+# 또는
+cd backend && uv run python -m kubelens ask "..." [-n NAMESPACE] [--json]
+```
+
+종료 코드: `0` 정상, `1` 오류(거부·파싱 실패 등), `2` 증거 검증 실패.
 
 ## 장애 시나리오
 
