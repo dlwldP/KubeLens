@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -81,8 +82,18 @@ def test_s1_crashloop_describe_and_previous_logs(kube: ReadOnlyKube) -> None:
     desc = describe_pod(kube, NS, name)
     assert "CrashLoopBackOff" in desc or "Error" in desc
     assert "exit code 1" in desc
-    logs = get_pod_logs(kube, NS, name, previous=True)
-    assert "DB_HOST" in logs
+    # 컨테이너가 막 재시작된 순간에는 kubelet이 직전 컨테이너 로그를 돌려주지 못할 때가 있다
+    # ("unable to retrieve container logs"). 직전/현재 컨테이너 로그를 잠시 번갈아 확인한다.
+    logs = ""
+    for _ in range(10):
+        for previous in (True, False):
+            logs = get_pod_logs(kube, NS, name, previous=previous)
+            if "DB_HOST" in logs:
+                break
+        if "DB_HOST" in logs:
+            break
+        time.sleep(3)
+    assert "DB_HOST" in logs, logs
     assert "kl-fake-0000000000000000" not in logs  # 마스킹
     assert "api_key=***" in logs
 
