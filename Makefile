@@ -9,7 +9,7 @@ UV        := uv --directory $(BACKEND)
 NPM       := npm --prefix $(FRONTEND)
 
 .PHONY: phase0 cluster-up cluster-down rbac rbac-check chaos-up chaos-down chaos-verify chaos-status \
-        setup lint test test-unit test-kind ask eval api sse-smoke ui-dev e2e demo-gif
+        setup lint test test-unit test-kind ask eval api sse-smoke ui-dev e2e demo-gif docker-build docker-run
 
 phase0: cluster-up rbac rbac-check chaos-up chaos-verify
 	@echo ""
@@ -62,6 +62,7 @@ lint:
 
 test-unit:
 	$(UV) run pytest -m "not kind" tests ../eval
+	$(NPM) test
 
 # kind 클러스터 대상 (make phase0 선행). 클러스터가 없으면 skip이 아니라 실패한다.
 test-kind:
@@ -92,6 +93,19 @@ e2e:
 # 실행 중인 make api(실제 API 키)로 S1 진단 과정을 녹화해 docs/demo.gif 생성 (ffmpeg 필요)
 demo-gif:
 	bash infra/demo-gif.sh
+
+# Docker 이미지 (UI + API 한 개)
+docker-build:
+	docker build -t kubelens:latest .
+
+# kind의 API 서버가 127.0.0.1에 있으므로 host 네트워크로 실행하고, 서버는 127.0.0.1에만 바인딩한다 (Linux).
+# kubeconfig는 권한 600이므로 현재 사용자 uid로 실행한다.
+docker-run:
+	docker run --rm --network host --user $$(id -u):$$(id -g) \
+		-e HOST=127.0.0.1 -e PORT=8000 -e ANTHROPIC_API_KEY \
+		-v $(CURDIR)/infra/kubelens.kubeconfig:/kube/config:ro \
+		-v kubelens-data:/data \
+		kubelens:latest
 
 # 진단 질문 (ANTHROPIC_API_KEY 필요). 예: make ask Q="payment-api가 계속 재시작돼"
 ask:

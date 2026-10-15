@@ -17,7 +17,8 @@
 - **증거 없는 주장 금지**: 도구 호출마다 ID가 붙고, 모든 원인 후보는 실제 존재하는 호출 ID를 1개 이상 인용해야 한다. 아니면 1회 재생성, 그래도 안 되면 실패로 표시한다.
 - **정확도를 수치로 측정**: kind에 재현한 장애 6종(S1~S6)을 자동으로 진단·채점하는 평가 하네스(`make eval`).
 - **비용 상한**: 질문당 도구 호출 최대 8회, 로그 tail 200줄, 도구 출력 4,000자 절단.
-- **민감정보 마스킹**: Bearer 토큰, `password/token/secret/api_key=…`, JWT, AWS 키를 LLM 전달 전에 `***`로 가린다. kubeconfig는 LLM에 보내지 않는다.
+- **민감정보 마스킹**: Bearer/Basic 인증, `password/token/secret/api_key/credentials=…`, JWT, PEM 개인키, URL 속 비밀번호(`postgres://user:***@host`), AWS·GitHub·Anthropic·Slack 토큰을 LLM 전달 전에 `***`로 가린다. 무작위 입력 기반 속성 테스트(hypothesis)로 검증한다. kubeconfig는 LLM에 보내지 않는다.
+- **견고성**: 증거 수집 시간 상한(기본 180초, 넘으면 모은 증거로 보고서 작성), 브라우저 연결이 끊기면 진단 중단, 동시 질문 격리(SQLite WAL), kubeconfig는 허용 디렉터리 안의 경로만 받는다.
 
 ## 빠른 시작 (약 10분)
 
@@ -38,6 +39,20 @@ make api                          # http://127.0.0.1:8000 (UI 포함)
 1. **클러스터 설정**: context `kubelens-readonly` 선택 → **연결 테스트** → **저장하고 시작**
 2. 질문 예: `kubelens-chaos 네임스페이스의 payment-api가 계속 재시작돼. 왜 그래?`
 3. 오른쪽 트레이스 패널에 도구 호출이 실시간으로 쌓이고, 진단 카드의 **증거** 버튼을 누르면 원본 출력(마스킹 적용)이 열린다.
+
+### Docker로 실행 (Linux)
+
+```bash
+make phase0
+make docker-build
+ANTHROPIC_API_KEY=sk-ant-... make docker-run   # http://127.0.0.1:8000
+```
+
+kind의 API 서버가 호스트의 127.0.0.1에 있으므로 `--network host`로 실행하고, 서버는 127.0.0.1에만 바인딩한다.
+kubeconfig(`infra/kubelens.kubeconfig`)는 이미지에 넣지 않고 읽기 전용으로 마운트한다.
+macOS의 Docker Desktop은 host 네트워크 동작이 달라 `make api` 실행을 권장한다.
+
+### CLI
 
 CLI로도 쓸 수 있다.
 
@@ -124,7 +139,7 @@ _아직 실제 LLM으로 평가를 실행하지 않았다._
 
 ```bash
 make lint          # ruff + oxlint + tsc
-make test-unit     # 백엔드 단위 테스트 + 평가 채점 테스트 (클러스터·API 키 불필요)
+make test-unit     # 백엔드 단위·API·동시성 테스트 + 평가 채점 테스트 + 프런트 Vitest (클러스터·API 키 불필요)
 make test-kind     # kind 통합 테스트 (make phase0 선행)
 make api           # API + UI 서버
 make ui-dev        # 프런트 개발 서버 http://localhost:5173 (/api 프록시)
@@ -145,8 +160,9 @@ KUBELENS_KUBE_FACTORY=tests.fakes:fake_kube \         # 가짜 클러스터
 
 | 잡 | 언제 | 내용 |
 |---|---|---|
-| lint + unit tests | push / PR | ruff, oxlint, tsc, pytest |
-| phase0 + kind integration | push / PR | kind 생성 → RBAC 검사 → S1~S6 상태 검증 → kind 통합 테스트 → SSE 순서 검사 → Playwright e2e (대본 LLM, 실제 클러스터) |
+| lint + unit tests | push / PR | ruff, oxlint, tsc, shellcheck, pytest, Vitest |
+| macOS lint + unit tests | push / PR | macOS에서 `make setup`·lint·단위 테스트, 기본 bash 3.2로 스크립트 문법 확인 |
+| phase0 + kind integration | push / PR | kind 생성 → RBAC 검사 → S1~S6 상태 검증 → kind 통합 테스트 → SSE 순서 검사 → Playwright e2e (대본 LLM, 실제 클러스터) → Docker 이미지 빌드·연결 테스트 |
 | eval | 수동 (Run workflow) | 실제 LLM으로 S1~S6 평가, 결과 표를 Step Summary와 artifact로 |
 
 ### API
@@ -161,8 +177,16 @@ KUBELENS_KUBE_FACTORY=tests.fakes:fake_kube \         # 가짜 클러스터
 | POST | `/api/sessions/{id}/messages` | 질문 전송, SSE 응답 (`thinking` · `tool_start` · `tool_end` · `final` · `error`) |
 | GET | `/api/toolcalls/{id}` | 증거 원본 (마스킹 적용) |
 
-진단 결과의 `evidence_refs`는 `ToolCall.id`를 가리킨다. 환경 변수: `ANTHROPIC_API_KEY`, `KUBELENS_MODEL`,
-`KUBELENS_KUBECONFIG`(기본 `infra/kubelens.kubeconfig`), `KUBELENS_DB_URL`(기본 `backend/kubelens.db`).
+진단 결과의 `evidence_refs`는 `ToolCall.id`를 가리킨다.
+
+| 환경 변수 | 기본값 | 설명 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Claude API 키 |
+| `KUBELENS_MODEL` | `claude-sonnet-5-5` | 진단 모델 |
+| `KUBELENS_KUBECONFIG` | `infra/kubelens.kubeconfig` | 기본 kubeconfig |
+| `KUBELENS_KUBECONFIG_DIRS` | 기본 kubeconfig 폴더, `~/.kube` | API가 받을 수 있는 kubeconfig 위치 (`:`로 구분) |
+| `KUBELENS_DIAGNOSIS_TIMEOUT` | `180` | 증거 수집 시간 상한(초), `0`이면 무제한 |
+| `KUBELENS_DB_URL` | `sqlite:///backend/kubelens.db` | DB 위치 |
 
 ### 데모 GIF 만들기
 

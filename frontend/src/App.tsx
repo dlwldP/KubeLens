@@ -3,7 +3,6 @@ import {
   api,
   streamMessage,
   type Cluster,
-  type Message,
   type SessionDetail,
   type SessionSummary,
   type StreamEvent,
@@ -13,6 +12,7 @@ import { DiagnosisCard } from './components/DiagnosisCard'
 import { EvidenceModal } from './components/EvidenceModal'
 import { SessionList } from './components/SessionList'
 import { TracePanel, type TraceItem } from './components/TracePanel'
+import { evidenceLabels, traceFromMessage } from './trace'
 
 type Live = {
   question: string
@@ -27,10 +27,6 @@ const EXAMPLES = [
   'batch-trainer가 계속 Pending이야. 왜 스케줄이 안 돼?',
   '지금 클러스터에 문제 있는 거 있어?',
 ]
-
-function traceFromMessage(m: Message): TraceItem[] {
-  return m.tool_calls.map((t, i) => ({ ...t, ref: `tc_${i + 1}` }))
-}
 
 export default function App() {
   const [clusters, setClusters] = useState<Cluster[] | null>(null)
@@ -193,7 +189,7 @@ export default function App() {
                     <DiagnosisCard
                       result={m.result}
                       onEvidence={setEvidenceId}
-                      labels={Object.fromEntries(traceFromMessage(m).map((t) => [t.id, t.ref ?? t.id]))}
+                      labels={evidenceLabels(m)}
                     />
                   ) : (
                     <p className="rounded-xl bg-rose-50 p-4 text-sm text-rose-800">{m.content || '응답 없음'}</p>

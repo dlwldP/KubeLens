@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+frontend/dist
+frontend/e2e-results
+frontend/test-results
+eval/results
+*.db
+*.db-*
+# 자격증명은 절대 이미지에 넣지 않는다
+infra/kubelens.kubeconfig
+.env

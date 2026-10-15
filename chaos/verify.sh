@@ -44,7 +44,7 @@ describe() {
 ALL=(s1 s2 s3 s4 s5 s6)
 OK=" "
 is_ok() { [[ "$OK" == *" $1 "* ]]; }
-up() { printf %s "$1" | tr a-z A-Z; }
+up() { printf %s "$1" | tr '[:lower:]' '[:upper:]'; }
 START=$(date +%s)
 
 echo "장애 상태 대기 중 (최대 ${TIMEOUT}초)..."
@@ -56,7 +56,7 @@ while :; do
       echo "  ✅ $(up "$s") 도달 ($(( $(date +%s) - START ))s)"
     fi
   done
-  [ "$(echo $OK | wc -w)" -eq "${#ALL[@]}" ] && break
+  [ "$(echo "$OK" | wc -w)" -eq "${#ALL[@]}" ] && break
   [ $(( $(date +%s) - START )) -ge "$TIMEOUT" ] && break
   sleep 5
 done

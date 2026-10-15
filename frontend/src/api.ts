@@ -31,6 +31,8 @@ export type DiagnosisResult = {
   valid: boolean
   validation_errors: string[]
   usage: Record<string, number>
+  /** 시간 상한으로 증거 수집을 일찍 끝냈는지 (이전 버전 기록에는 없음) */
+  timed_out?: boolean
 }
 
 export type ToolCallSummary = {
@@ -77,6 +79,27 @@ export type StreamEvent =
     }
   | { type: 'final'; data: DiagnosisResult & { message_id: number } }
   | { type: 'error'; data: { message_id?: number; message: string } }
+
+/**
+ * SSE 텍스트를 이벤트 단위(빈 줄 구분)로 자른다. 마지막의 덜 받은 조각은 rest로 돌려준다.
+ * data 줄이 여러 개면 줄바꿈으로 이어 붙인다(SSE 규격).
+ */
+export function parseSSE(buffer: string): { events: StreamEvent[]; rest: string } {
+  const normalized = buffer.replace(/\r\n/g, '\n')
+  const blocks = normalized.split('\n\n')
+  const rest = blocks.pop() ?? ''
+  const events: StreamEvent[] = []
+  for (const block of blocks) {
+    let type = ''
+    const data: string[] = []
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) type = line.slice(6).trim()
+      else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
+    }
+    if (type && data.length) events.push({ type, data: JSON.parse(data.join('\n')) } as StreamEvent)
+  }
+  return { events, rest }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -137,18 +160,8 @@ export async function streamMessage(
   for (;;) {
     const { value, done } = await reader.read()
     if (done) break
-    buffer += value
-    let sep: number
-    while ((sep = buffer.indexOf('\n\n')) >= 0) {
-      const block = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      let type = ''
-      let data = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event: ')) type = line.slice(7)
-        else if (line.startsWith('data: ')) data += line.slice(6)
-      }
-      if (type && data) onEvent({ type, data: JSON.parse(data) } as StreamEvent)
-    }
+    const parsed = parseSSE(buffer + value)
+    buffer = parsed.rest
+    parsed.events.forEach(onEvent)
   }
 }
