@@ -146,3 +146,74 @@ def test_validate_diagnosis_flags_unknown_refs() -> None:
     ev = [Evidence("tc_1", "get_nodes", {}, "", False, 1, "ok")]
     errors = validate_diagnosis(s1_diagnosis(["tc_1", "tc_7"]), ev)
     assert len(errors) == 1 and "tc_7" in errors[0]
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_timeout_stops_collection_and_still_reports(kube) -> None:
+    clock = FakeClock()
+    turns = [list(t) for t in S1_TURNS]
+
+    class SlowActor(ScriptedActor):
+        def invoke(self, messages):  # type: ignore[no-untyped-def]
+            clock.now += 50  # LLM 한 턴에 50초 걸린다고 가정
+            return super().invoke(messages)
+
+    events: list[str] = []
+    synth = ScriptedSynth([lambda p: s1_diagnosis(["tc_1"])])
+    result = diagnose(
+        "왜?",
+        kube,
+        FakeLLMs(Planner(), SlowActor(turns), synth),
+        on_event=lambda t, d: events.append(d.get("message", "")),
+        timeout_s=60,
+        clock=clock,
+    )
+    # 1턴(50s) 후 list_pods 1회 실행, 2턴(100s) 후 시간 초과 → 남은 도구는 실행하지 않음
+    assert [e.tool_name for e in result.evidence] == ["list_pods"]
+    assert result.timed_out
+    assert result.valid
+    assert any("시간 상한" in m for m in events)
+    assert result.to_dict()["timed_out"] is True
+
+
+def test_no_timeout_by_default(kube) -> None:
+    result = diagnose(
+        "왜?",
+        kube,
+        FakeLLMs(
+            Planner(),
+            ScriptedActor([list(t) for t in S1_TURNS]),
+            ScriptedSynth([s1_diagnosis(["tc_3"])]),
+        ),
+    )
+    assert not result.timed_out
+    assert len(result.evidence) == 3
+
+
+def test_should_stop_cancels_before_next_step(kube) -> None:
+    from kubelens.agent import DiagnosisCancelled
+
+    executed: list[str] = []
+    stop = {"flag": False}
+
+    def on_event(event: str, data: dict) -> None:  # type: ignore[type-arg]
+        if event == "tool_end":
+            executed.append(data["tool_name"])
+            stop["flag"] = True  # 첫 도구가 끝나면 사용자가 떠났다고 가정
+
+    with pytest.raises(DiagnosisCancelled):
+        diagnose(
+            "왜?",
+            kube,
+            FakeLLMs(Planner(), ScriptedActor([list(t) for t in S1_TURNS]), ScriptedSynth([])),
+            on_event=on_event,
+            should_stop=lambda: stop["flag"],
+        )
+    assert executed == ["list_pods"]

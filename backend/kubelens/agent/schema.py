@@ -52,6 +52,7 @@ class DiagnosisResult:
     validation_errors: list[str] = field(default_factory=list)
     synth_attempts: int = 0
     usage: dict[str, int] = field(default_factory=dict)
+    timed_out: bool = False  # 시간 상한으로 증거 수집을 일찍 끝냈는지
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +61,7 @@ class DiagnosisResult:
             "validation_errors": self.validation_errors,
             "synth_attempts": self.synth_attempts,
             "usage": self.usage,
+            "timed_out": self.timed_out,
             "diagnosis": self.diagnosis.model_dump() if self.diagnosis else None,
             "evidence": [
                 {

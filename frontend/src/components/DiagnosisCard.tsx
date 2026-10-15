@@ -22,6 +22,12 @@ export function DiagnosisCard({ result, onEvidence, labels = {} }: Props) {
     <div data-testid="diagnosis-card" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-sm leading-6">{d.summary}</p>
 
+      {result.timed_out && (
+        <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⏱ 시간 상한에 도달해 일부 증거만으로 작성한 보고서입니다.
+        </div>
+      )}
+
       {!result.valid && (
         <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-800">
           ⚠ 증거 검증 실패: {result.validation_errors.join(' / ')}

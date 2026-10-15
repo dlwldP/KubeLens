@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from kubelens.api.app import create_app
 from kubelens.api.db import make_engine
+from kubelens.tools.kube import default_kubeconfig_path
 from tests.fake_llms import scripted_llms
 from tests.fakes import fake_kube
 
@@ -23,6 +24,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         kube_factory=fake_kube,
         llm_factory=scripted_llms,
         serve_frontend=False,
+        kubeconfig_dirs=[tmp_path, default_kubeconfig_path().parent],
     )
     with TestClient(app) as c:
         yield c
@@ -191,3 +193,20 @@ def test_not_found(client: TestClient) -> None:
     assert client.get("/api/toolcalls/nope").status_code == 404
     assert client.post("/api/sessions", json={"cluster_id": 42}).status_code == 404
     assert client.post("/api/sessions/1/messages", json={"content": "x"}).status_code == 404
+
+
+def test_kubeconfig_outside_allowed_dirs_is_rejected(client: TestClient, tmp_path: Path) -> None:
+    for path in ["/etc/passwd", str(tmp_path / ".." / "escape" / "config")]:
+        res = client.get("/api/kube/contexts", params={"kubeconfig_path": path})
+        assert res.status_code == 400
+        assert "허용되지 않은" in res.json()["detail"]
+    res = client.post("/api/clusters", json={"name": "x", "kubeconfig_path": "/etc/passwd"})
+    assert res.status_code == 400
+
+
+def test_broken_kubeconfig_error_does_not_echo_contents(client: TestClient, tmp_path: Path) -> None:
+    broken = tmp_path / "broken"
+    broken.write_text("users: [{name: u, user: {token: leaked-token-123}\n  - : : bad")
+    res = client.get("/api/kube/contexts", params={"kubeconfig_path": str(broken)})
+    assert res.status_code == 400
+    assert "leaked-token-123" not in res.text

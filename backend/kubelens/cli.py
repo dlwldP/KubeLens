@@ -60,6 +60,8 @@ def _render(result: DiagnosisResult) -> str:
         f"\nLLM 호출 {u.get('llm_calls', 0)}회, 입력 {u.get('input_tokens', 0)} / "
         f"출력 {u.get('output_tokens', 0)} 토큰, 도구 호출 {len(result.evidence)}회"
     )
+    if result.timed_out:
+        lines.append("⏱ 시간 상한에 도달해 일부 증거만으로 작성한 보고서입니다.")
     if not result.valid:
         lines += ["", "⚠ 증거 검증 실패:", *(f"  - {e}" for e in result.validation_errors)]
     return "\n".join(lines)
@@ -74,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--kubeconfig", default=None, help="기본값: infra/kubelens.kubeconfig")
     ask.add_argument("--context", default=None)
     ask.add_argument("--model", default=None, help="기본값: KUBELENS_MODEL 또는 claude-sonnet-5-5")
+    ask.add_argument(
+        "--timeout",
+        type=float,
+        default=180,
+        help="증거 수집 시간 상한(초). 넘으면 모은 증거로 보고서 작성. 0이면 무제한 (기본 180)",
+    )
     ask.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
     ask.add_argument("-q", "--quiet", action="store_true", help="실시간 트레이스 숨김")
     args = parser.parse_args(argv)
@@ -88,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
             anthropic_llms(args.model),
             namespace=args.namespace,
             on_event=None if args.quiet else _print_event,
+            timeout_s=args.timeout or None,
         )
     except AgentError as exc:
         print(f"진단 실패: {exc}", file=sys.stderr)

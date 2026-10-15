@@ -194,3 +194,43 @@ def test_run_tool_api_error_becomes_error_result(kube) -> None:
     result = run_tool(kube, "describe_pod", {"namespace": NS, "name": "ghost"})
     assert result.status == "error"
     assert result.output.startswith("ERROR 404")
+
+
+def test_large_cluster_outputs_stay_bounded_and_fast(core: FakeCore) -> None:
+    """파드 3,000개·이벤트 5,000개 규모에서도 출력은 4,000자 이하, 시간은 수 초 이내."""
+    import copy
+    import time
+
+    from kubelens.tools import ReadOnlyKube
+    from tests import fakes
+
+    template = fakes.crashloop_pod()
+    pods = []
+    for i in range(3000):
+        p = copy.deepcopy(template)
+        p.metadata.name = f"worker-{i:04d}"
+        pods.append(p)
+    core.pods = pods
+    many_events = [
+        fakes._event("Pod", f"worker-{i % 3000:04d}", "BackOff", "Back-off restarting", i % 3600)
+        for i in range(5000)
+    ]
+    core.list_namespaced_event = lambda namespace: fakes._List(many_events)  # type: ignore[method-assign]
+    kube = ReadOnlyKube(core, fakes.FakeApps())
+
+    for name, args in [
+        ("list_pods", {"namespace": NS}),
+        ("list_pods", {"namespace": "*", "only_unhealthy": True}),
+        ("get_events", {"namespace": NS}),
+        ("get_events", {"namespace": NS, "involved_object": "worker-0001"}),
+    ]:
+        started = time.perf_counter()
+        result = run_tool(kube, name, args)
+        elapsed = time.perf_counter() - started
+        assert result.status == "ok", result.output
+        assert len(result.output) <= 4000
+        assert elapsed < 5, f"{name} took {elapsed:.1f}s"
+    assert run_tool(kube, "list_pods", {"namespace": NS}).truncated
+    # 이벤트는 limit(최대 50)으로 먼저 자르므로 절단 없이 최신 이벤트가 남는다
+    events_out = run_tool(kube, "get_events", {"namespace": NS}).output
+    assert len(events_out.splitlines()) == 51

@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
 from sqlmodel import Field, SQLModel, create_engine
 
 _DEFAULT_DB = Path(__file__).resolve().parents[2] / "kubelens.db"
@@ -58,6 +58,18 @@ class ToolCall(SQLModel, table=True):
 
 def make_engine(url: str | None = None) -> Engine:
     url = url or os.environ.get("KUBELENS_DB_URL") or f"sqlite:///{_DEFAULT_DB}"
-    engine = create_engine(url, connect_args={"check_same_thread": False})
+    is_sqlite = url.startswith("sqlite")
+    engine = create_engine(
+        url, connect_args={"check_same_thread": False, "timeout": 30} if is_sqlite else {}
+    )
+    if is_sqlite:
+        # 여러 진단이 동시에 도구 호출을 기록해도 "database is locked"가 나지 않게 한다
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_conn: object, _record: object) -> None:
+            cur = dbapi_conn.cursor()  # type: ignore[attr-defined]
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+            cur.close()
+
     SQLModel.metadata.create_all(engine)
     return engine

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import operator
+import time
 from collections.abc import Callable
 from typing import Annotated, Any, Literal, Protocol, TypedDict
 
@@ -35,6 +36,10 @@ EventSink = Callable[[str, dict[str, Any]], None]
 
 class AgentError(RuntimeError):
     """LLM 거부(refusal), 출력 파싱 실패 등 진단을 끝낼 수 없는 오류."""
+
+
+class DiagnosisCancelled(AgentError):
+    """요청자가 떠나는 등으로 진단이 중단됨 (should_stop이 True를 반환)."""
 
 
 class ChatModel(Protocol):
@@ -115,10 +120,38 @@ def validate_diagnosis(diagnosis: Diagnosis, evidence: list[Evidence]) -> list[s
     return errors
 
 
-def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = None) -> Any:
+def build_graph(
+    kube: ReadOnlyKube,
+    llms: LLMs,
+    on_event: EventSink | None = None,
+    *,
+    deadline: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    run_info: dict[str, Any] | None = None,
+) -> Any:
+    """deadline(clock 기준 시각)이 지나면 도구 수집을 멈추고 모은 증거로 보고서를 쓴다.
+    should_stop()이 True면 다음 단계 시작 전에 DiagnosisCancelled를 던진다."""
     emit: EventSink = on_event or (lambda _type, _data: None)
+    info = run_info if run_info is not None else {}
+    info.setdefault("timed_out", False)
+
+    def check_cancel() -> None:
+        if should_stop is not None and should_stop():
+            raise DiagnosisCancelled("진단이 취소되었습니다")
+
+    def timed_out() -> bool:
+        if deadline is None or clock() < deadline:
+            return False
+        if not info["timed_out"]:
+            info["timed_out"] = True
+            emit(
+                "thinking", {"message": "시간 상한 도달 — 지금까지 모은 증거로 보고서를 작성합니다"}
+            )
+        return True
 
     def plan(state: AgentState) -> dict[str, Any]:
+        check_cancel()
         emit("thinking", {"message": "조사 계획 수립 중"})
         scope = f"\n(선택된 네임스페이스: {state['namespace']})" if state["namespace"] else ""
         response = llms.planner.invoke(
@@ -137,6 +170,7 @@ def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = Non
         return {"plan": plan_text, "messages": [kickoff], "usage": _usage(response)}
 
     def agent(state: AgentState) -> dict[str, Any]:
+        check_cancel()
         remaining = MAX_TOOL_CALLS - len(state["evidence"])
         emit("thinking", {"message": f"증거 수집 중 (남은 도구 호출 {remaining}회)"})
         response = llms.actor.invoke(
@@ -156,6 +190,16 @@ def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = Non
         new_evidence: list[Evidence] = []
         replies: list[ToolMessage] = []
         for call in last.tool_calls:
+            check_cancel()
+            if timed_out():
+                replies.append(
+                    ToolMessage(
+                        "ERROR: 진단 시간 상한을 넘어 실행하지 않았다.",
+                        tool_call_id=call["id"],
+                        status="error",
+                    )
+                )
+                continue
             if used + len(new_evidence) >= MAX_TOOL_CALLS:
                 # tool_use에는 반드시 tool_result가 따라와야 하므로 실행하지 않은 호출에도 응답한다.
                 replies.append(
@@ -202,6 +246,7 @@ def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = Non
         return {"messages": replies, "evidence": new_evidence}
 
     def synthesize(state: AgentState) -> dict[str, Any]:
+        check_cancel()
         attempt = state["synth_attempts"] + 1
         emit("thinking", {"message": "진단 보고서 작성 중", "attempt": attempt})
         prompt = (
@@ -227,12 +272,16 @@ def build_graph(kube: ReadOnlyKube, llms: LLMs, on_event: EventSink | None = Non
 
     def after_agent(state: AgentState) -> Literal["tools", "synthesize"]:
         last = state["messages"][-1]
-        if isinstance(last, AIMessage) and last.tool_calls:
+        if isinstance(last, AIMessage) and last.tool_calls and not timed_out():
             return "tools"
         return "synthesize"
 
     def after_tools(state: AgentState) -> Literal["agent", "synthesize"]:
-        if len(state["evidence"]) >= MAX_TOOL_CALLS or state["agent_turns"] >= MAX_AGENT_TURNS:
+        if (
+            len(state["evidence"]) >= MAX_TOOL_CALLS
+            or state["agent_turns"] >= MAX_AGENT_TURNS
+            or timed_out()
+        ):
             return "synthesize"
         return "agent"
 
@@ -262,9 +311,23 @@ def diagnose(
     llms: LLMs,
     namespace: str | None = None,
     on_event: EventSink | None = None,
+    *,
+    timeout_s: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> DiagnosisResult:
+    """timeout_s: 증거 수집 시간 상한(초). 넘으면 모은 증거만으로 보고서를 쓰고 timed_out=True."""
     emit: EventSink = on_event or (lambda _type, _data: None)
-    graph = build_graph(kube, llms, on_event)
+    run_info: dict[str, Any] = {}
+    graph = build_graph(
+        kube,
+        llms,
+        on_event,
+        deadline=None if timeout_s is None else clock() + timeout_s,
+        should_stop=should_stop,
+        clock=clock,
+        run_info=run_info,
+    )
     initial: AgentState = {
         "question": question,
         "namespace": namespace,
@@ -290,6 +353,7 @@ def diagnose(
         validation_errors=state["validation_errors"],
         synth_attempts=state["synth_attempts"],
         usage=state["usage"],
+        timed_out=run_info["timed_out"],
     )
     emit("final", result.to_dict())
     return result

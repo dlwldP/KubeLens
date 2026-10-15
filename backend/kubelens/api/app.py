@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
-from kubelens.agent import diagnose
+from kubelens.agent import DiagnosisCancelled, diagnose
 from kubelens.api.db import Cluster, DiagnosisSession, Message, ToolCall, make_engine
 from kubelens.tools import ReadOnlyKube
 from kubelens.tools.kube import default_kubeconfig_path
@@ -33,6 +33,7 @@ KubeFactory = Callable[[str | None, str | None], ReadOnlyKube]
 LLMFactory = Callable[[], Any]
 
 DEFAULT_TITLE = "새 진단"
+DEFAULT_DIAGNOSIS_TIMEOUT_S = 180.0
 FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
@@ -45,6 +46,19 @@ def _load(spec: str) -> Any:
 def _default_kube_factory() -> KubeFactory:
     spec = os.environ.get("KUBELENS_KUBE_FACTORY")
     return _load(spec) if spec else ReadOnlyKube.from_kubeconfig
+
+
+def default_kubeconfig_dirs() -> list[Path]:
+    """API로 받을 수 있는 kubeconfig 위치. KUBELENS_KUBECONFIG_DIRS(os.pathsep 구분)로 변경."""
+    env = os.environ.get("KUBELENS_KUBECONFIG_DIRS")
+    if env:
+        return [Path(p).expanduser() for p in env.split(os.pathsep) if p]
+    return [default_kubeconfig_path().parent, Path.home() / ".kube"]
+
+
+def _default_timeout() -> float | None:
+    value = float(os.environ.get("KUBELENS_DIAGNOSIS_TIMEOUT", DEFAULT_DIAGNOSIS_TIMEOUT_S))
+    return value if value > 0 else None
 
 
 def _default_llm_factory() -> LLMFactory:
@@ -102,8 +116,16 @@ def create_app(
     kube_factory: KubeFactory | None = None,
     llm_factory: LLMFactory | None = None,
     serve_frontend: bool = True,
+    kubeconfig_dirs: list[Path] | None = None,
+    diagnosis_timeout_s: float | None = -1.0,
 ) -> FastAPI:
+    """diagnosis_timeout_s: 증거 수집 시간 상한. -1이면 환경변수/기본값(180초), None이면 무제한."""
     state: dict[str, Any] = {}
+    allowed_dirs = [
+        d.resolve()
+        for d in (kubeconfig_dirs if kubeconfig_dirs is not None else default_kubeconfig_dirs())
+    ]
+    timeout_s = _default_timeout() if diagnosis_timeout_s == -1.0 else diagnosis_timeout_s
     llm_lock = threading.Lock()
 
     @asynccontextmanager
@@ -127,15 +149,30 @@ def create_app(
     def kube_for(kubeconfig_path: str, context: str | None) -> ReadOnlyKube:
         return state["kube_factory"](kubeconfig_path, context)
 
+    def checked_kubeconfig(path: str | None) -> str:
+        """허용된 디렉터리 안의 경로만 받는다 (임의 파일을 읽어 보는 용도로 쓰이지 않게)."""
+        resolved = Path(path or default_kubeconfig_path()).expanduser().resolve()
+        if not any(resolved.is_relative_to(d) for d in allowed_dirs):
+            raise HTTPException(
+                400,
+                "허용되지 않은 kubeconfig 경로입니다. 허용 위치: "
+                + ", ".join(str(d) for d in allowed_dirs)
+                + " (KUBELENS_KUBECONFIG_DIRS로 변경)",
+            )
+        return str(resolved)
+
     # --- 클러스터 ----------------------------------------------------------
 
     @app.get("/api/kube/contexts")
     def kube_contexts(kubeconfig_path: str | None = None) -> dict[str, Any]:
-        path = kubeconfig_path or str(default_kubeconfig_path())
+        path = checked_kubeconfig(kubeconfig_path)
         try:
             contexts, active = kube_config.list_kube_config_contexts(config_file=path)
         except Exception as exc:
-            raise HTTPException(400, f"kubeconfig를 읽을 수 없습니다: {path} ({exc})") from exc
+            # 파싱 오류 메시지에는 파일 내용(토큰 등)이 섞일 수 있으므로 예외 종류만 알린다
+            raise HTTPException(
+                400, f"kubeconfig를 읽을 수 없습니다: {path} ({type(exc).__name__})"
+            ) from exc
         return {
             "kubeconfig_path": path,
             "contexts": [
@@ -158,7 +195,7 @@ def create_app(
     def create_cluster(body: ClusterCreate) -> dict[str, Any]:
         cluster = Cluster(
             name=body.name,
-            kubeconfig_path=body.kubeconfig_path or str(default_kubeconfig_path()),
+            kubeconfig_path=checked_kubeconfig(body.kubeconfig_path),
             context=body.context,
         )
         with db() as s:
@@ -266,6 +303,8 @@ def create_app(
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
+        cancel = threading.Event()  # 클라이언트가 연결을 끊으면 진단을 멈춘다
+
         def push(event: str, data: dict[str, Any]) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, (event, data))
 
@@ -300,7 +339,15 @@ def create_app(
 
             try:
                 kube = kube_for(kubeconfig_path, context)
-                result = diagnose(body.content, kube, llms(), body.namespace, on_event)
+                result = diagnose(
+                    body.content,
+                    kube,
+                    llms(),
+                    body.namespace,
+                    on_event,
+                    timeout_s=timeout_s,
+                    should_stop=cancel.is_set,
+                )
                 diagnosis = result.diagnosis.model_dump() if result.diagnosis else None
                 if diagnosis:
                     for cause in diagnosis["root_causes"]:
@@ -310,6 +357,7 @@ def create_app(
                     "valid": result.valid,
                     "validation_errors": result.validation_errors,
                     "usage": result.usage,
+                    "timed_out": result.timed_out,
                 }
                 with db() as s:
                     msg = s.get(Message, assistant_id)
@@ -319,6 +367,13 @@ def create_app(
                     s.add(msg)
                     s.commit()
                 push("final", {"message_id": assistant_id, **payload})
+            except DiagnosisCancelled:
+                with db() as s:
+                    msg = s.get(Message, assistant_id)
+                    if msg is not None:
+                        msg.content = "진단 취소됨 (클라이언트 연결 끊김)"
+                        s.add(msg)
+                        s.commit()
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 with db() as s:
@@ -333,9 +388,13 @@ def create_app(
 
         async def stream() -> AsyncIterator[str]:
             worker = asyncio.create_task(asyncio.to_thread(work))
-            while (item := await queue.get()) is not None:
-                yield _sse(*item)
-            await worker
+            try:
+                while (item := await queue.get()) is not None:
+                    yield _sse(*item)
+                await worker
+            finally:
+                if not worker.done():  # 응답 도중 연결이 끊겼다
+                    cancel.set()
 
         return StreamingResponse(
             stream(),
