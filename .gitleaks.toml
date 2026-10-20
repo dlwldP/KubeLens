@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "마스킹 테스트용 가짜 비밀값"
+paths = ['''backend/tests/test_masking\.py''']
